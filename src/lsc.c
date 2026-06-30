@@ -11,6 +11,7 @@ typedef struct params  {
     char     target_dir[PATH_MAX];
     bool     long_format;
     bool     all;
+    bool     almost_all;
     bool     human_readable;
     bool     sort_by_time;
     bool     sort_by_size;
@@ -46,6 +47,7 @@ int main(int argc, char **argv) {
 
     printf("Long format: %s\n",       params.long_format    ? "True" : "False");
     printf("All: %s\n",               params.all            ? "True" : "False");
+    printf("Almost all: %s\n",        params.almost_all     ? "True" : "False");
     printf("Human readable: %s\n",    params.human_readable ? "True" : "False");
     printf("Sort by time: %s\n",      params.sort_by_time   ? "True" : "False");
     printf("Sort by size: %s\n",      params.sort_by_size   ? "True" : "False");
@@ -90,6 +92,7 @@ static int parse_args(int argc, char **argv, params_t *params) {
                 
                 if      (strcmp(argv[i], "--long")           == 0) params->long_format    = true;
                 else if (strcmp(argv[i], "--all")            == 0) params->all            = true;
+                else if (strcmp(argv[i], "--almost-all")     == 0) params->almost_all     = true;
                 else if (strcmp(argv[i], "--human-readable") == 0) params->human_readable = true;
                 else if (strcmp(argv[i], "--sort-by-time")   == 0) params->sort_by_time   = true;
                 else if (strcmp(argv[i], "--sort-by-size")   == 0) params->sort_by_size   = true;
@@ -105,6 +108,7 @@ static int parse_args(int argc, char **argv, params_t *params) {
                     switch (argv[i][j]) {
                         case 'l': params->long_format    = true; break;
                         case 'a': params->all            = true; break;
+                        case 'A': params->almost_all     = true; break;
                         case 'h': params->human_readable = true; break;
                         case 't': params->sort_by_time   = true; break;
                         case 's': params->sort_by_size   = true; break;
