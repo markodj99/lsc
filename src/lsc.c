@@ -225,7 +225,7 @@ static int parse_entries(entries_t *entries, params_t *params) {
         if (!params->long_format) continue;
 
         struct stat st;
-        if (stat(full_path, &st) == -1) {
+        if (lstat(full_path, &st) == -1) {
             fprintf(stderr, "lsc: cannot access '%s': %s\n", entry->d_name, strerror(errno));
             closedir(dir);
             return -1;
