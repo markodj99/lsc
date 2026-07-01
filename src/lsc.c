@@ -1,10 +1,21 @@
+#include <dirent.h>
 #include <errno.h>
 #include <limits.h>
+#include <pwd.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <time.h>
 #include <unistd.h>
+#include <sys/stat.h>
+
+
+#define PERMISSIONS_MAX 11
+#define FILE_SIZE_MAX   20
+#define OWNER_MAX       32
+#define DATE_MAX        32
 
 
 typedef struct params  {
@@ -18,8 +29,23 @@ typedef struct params  {
     bool     reverse_order;
 } params_t;
 
+typedef struct entry   {
+    char     permissions[PERMISSIONS_MAX];
+    char     file_size[FILE_SIZE_MAX];
+    char     owner[OWNER_MAX];
+    char     date[DATE_MAX];
+    char     name[NAME_MAX];
+} entry_t;
+
+typedef struct entries {
+    size_t   capacity;
+    size_t   count;
+    entry_t *data;
+} entries_t;
 
 static int  parse_args(int argc, char **argv, params_t *params);
+
+static int  parse_entries(entries_t *entries, params_t *params);
 
 
 int main(int argc, char **argv) {
@@ -45,14 +71,43 @@ int main(int argc, char **argv) {
         return -1;
     }
 
-    printf("Long format: %s\n",       params.long_format    ? "True" : "False");
-    printf("All: %s\n",               params.all            ? "True" : "False");
-    printf("Almost all: %s\n",        params.almost_all     ? "True" : "False");
-    printf("Human readable: %s\n",    params.human_readable ? "True" : "False");
-    printf("Sort by time: %s\n",      params.sort_by_time   ? "True" : "False");
-    printf("Sort by size: %s\n",      params.sort_by_size   ? "True" : "False");
-    printf("Reverse order: %s\n",     params.reverse_order  ? "True" : "False");
-    printf("Target directory: %s\n",  params.target_dir);
+    entries_t entries = {
+        .capacity = 10,
+        .count = 0,
+        .data = calloc(10, sizeof(entry_t))
+    };
+
+    if (entries.data == NULL) {
+        fprintf(stderr, "lsc: memory allocation failed\n");
+        return -1;
+    }
+
+    if (parse_entries(&entries, &params) != 0) {
+        free(entries.data);
+        return -1;
+    }
+
+    if (entries.count == 0) {
+        free(entries.data);
+        return 0;
+    }
+
+    if (!params.long_format) {
+        for (size_t i = 0; i < entries.count; i++) {
+            printf("%s ", entries.data[i].name);
+        }
+        printf("\n");
+    } else {
+        for (size_t i = 0; i < entries.count; i++) {
+            printf("%s ", entries.data[i].permissions);
+            printf("%s ", entries.data[i].file_size);
+            printf("%s ", entries.data[i].owner);
+            printf("%s ", entries.data[i].date);
+            printf("%s ", entries.data[i].name);
+            printf("\n");
+        }
+        printf("\n");
+    }
 
     return 0;
 }
@@ -124,6 +179,100 @@ static int parse_args(int argc, char **argv, params_t *params) {
         }
 
     }
+
+    return 0;
+}
+
+static int parse_entries(entries_t *entries, params_t *params) {
+    
+    DIR *dir = opendir(params->target_dir);
+    if (dir == NULL) {
+        fprintf(stderr, "lsc: cannot open directory '%s': %s\n", params->target_dir, strerror(errno));
+        return -1;
+    }
+
+    struct dirent *entry;
+
+    for (; (entry = readdir(dir)) != NULL; entries->count++) {
+        
+        if (!params->all && !params->almost_all && entry->d_name[0] == '.') {
+            continue;
+        }
+        if (!params->all && params->almost_all && 
+            (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)) {
+            continue;
+        }
+        
+        if (entries->count >= entries->capacity) {
+            entries->capacity *= 2;
+            entry_t *temp = realloc(entries->data, entries->capacity * sizeof(entry_t));
+
+            if (temp == NULL) {
+                fprintf(stderr, "lsc: memory allocation failed: %s\n", strerror(errno));
+                closedir(dir);
+                return -1;
+            }
+
+            entries->data = temp;
+        }
+
+        entry_t *e = &entries->data[entries->count];
+
+        char full_path[PATH_MAX];
+        snprintf(full_path, PATH_MAX, "%s/%s", params->target_dir, entry->d_name);
+        snprintf(e->name, NAME_MAX, "%s", entry->d_name);
+
+        if (!params->long_format) continue;
+
+        struct stat st;
+        if (stat(full_path, &st) == -1) {
+            fprintf(stderr, "lsc: cannot access '%s': %s\n", entry->d_name, strerror(errno));
+            closedir(dir);
+            return -1;
+        }
+        
+        if      (S_ISSOCK(st.st_mode))  e->permissions[0] = 's';
+        else if (S_ISREG (st.st_mode))  e->permissions[0] = '-';
+        else if (S_ISBLK (st.st_mode))  e->permissions[0] = 'b';
+        else if (S_ISDIR (st.st_mode))  e->permissions[0] = 'd';
+        else if (S_ISCHR (st.st_mode))  e->permissions[0] = 'c';
+        else if (S_ISFIFO(st.st_mode))  e->permissions[0] = 'p';
+        else /*(S_ISLNK(st.st_mode))*/  e->permissions[0] = 'l';
+
+        e->permissions[1]  = (st.st_mode & S_IRUSR) ? 'r' : '-';
+        e->permissions[2]  = (st.st_mode & S_IWUSR) ? 'w' : '-';
+        e->permissions[3]  = (st.st_mode & S_IXUSR) ? 'x' : '-';
+        e->permissions[4]  = (st.st_mode & S_IRGRP) ? 'r' : '-';
+        e->permissions[5]  = (st.st_mode & S_IWGRP) ? 'w' : '-';
+        e->permissions[6]  = (st.st_mode & S_IXGRP) ? 'x' : '-';
+        e->permissions[7]  = (st.st_mode & S_IROTH) ? 'r' : '-';
+        e->permissions[8]  = (st.st_mode & S_IWOTH) ? 'w' : '-';
+        e->permissions[9]  = (st.st_mode & S_IXOTH) ? 'x' : '-';
+        e->permissions[10] = '\0';
+
+        if (params->human_readable) {
+            off_t size = st.st_size;
+            if (size >= 1024 * 1024 * 1024) {
+                snprintf(e->file_size, FILE_SIZE_MAX, "%.1fG", (double)size / (1024 * 1024 * 1024));
+            } else if (size >= 1024 * 1024) {
+                snprintf(e->file_size, FILE_SIZE_MAX, "%.1fM", (double)size / (1024 * 1024));
+            } else if (size >= 1024) {
+                snprintf(e->file_size, FILE_SIZE_MAX, "%.1fK", (double)size / 1024);
+            } else {
+                snprintf(e->file_size, FILE_SIZE_MAX, "%ldB",  size);
+            }
+        } else {
+            snprintf(e->file_size, FILE_SIZE_MAX, "%ld", st.st_size);
+        }
+
+        struct passwd *pw = getpwuid(st.st_uid);
+        snprintf(e->owner, OWNER_MAX, "%s",  pw ? pw->pw_name : "unknown");
+
+        struct tm *tm = localtime(&st.st_mtime);
+        strftime(e->date, DATE_MAX, "%d.%m.%Y. %H:%M", tm);
+    }
+
+    closedir(dir);
 
     return 0;
 }
