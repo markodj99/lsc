@@ -109,6 +109,8 @@ int main(int argc, char **argv) {
         printf("\n");
     }
 
+    free(entries.data);
+
     return 0;
 }
 
