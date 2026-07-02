@@ -35,6 +35,9 @@ typedef struct entry   {
     char     owner[OWNER_MAX];
     char     date[DATE_MAX];
     char     name[NAME_MAX];
+    time_t   time_sort;
+    off_t    size_sort;
+    char     link_path[PATH_MAX];
 } entry_t;
 
 typedef struct entries {
@@ -46,6 +49,20 @@ typedef struct entries {
 static int  parse_args(int argc, char **argv, params_t *params);
 
 static int  parse_entries(entries_t *entries, params_t *params);
+
+static void sort(entries_t *entries, int (*predicate)(const void *, const void *));
+
+static int  compare_time_desc(const void *a, const void *b);
+
+static int  compare_time_asc (const void *a, const void *b);
+
+static int  compare_size_desc(const void *a, const void *b);
+
+static int  compare_size_asc (const void *a, const void *b);
+
+static int  compare_name_desc(const void *a, const void *b);
+
+static int  compare_name_asc (const void *a, const void *b);
 
 
 int main(int argc, char **argv) {
@@ -90,6 +107,14 @@ int main(int argc, char **argv) {
     if (entries.count == 0) {
         free(entries.data);
         return 0;
+    }
+
+    if (params.sort_by_time) {
+        sort(&entries,  params.reverse_order ? compare_time_asc : compare_time_desc);
+    } else if (params.sort_by_size) {
+        sort(&entries,  params.reverse_order ? compare_size_asc : compare_size_desc);
+    } else {
+        sort(&entries, !params.reverse_order ? compare_name_asc : compare_name_desc);
     }
 
     if (!params.long_format) {
@@ -222,34 +247,47 @@ static int parse_entries(entries_t *entries, params_t *params) {
 
         char full_path[PATH_MAX];
         snprintf(full_path, PATH_MAX, "%s/%s", params->target_dir, entry->d_name);
-        snprintf(e->name, NAME_MAX, "%s", entry->d_name);
-
-        if (!params->long_format) continue;
 
         struct stat st;
-        if (lstat(full_path, &st) == -1) {
+        if (lstat(full_path, &st) == -1) { // we need lstat always for color output
             fprintf(stderr, "lsc: cannot access '%s': %s\n", entry->d_name, strerror(errno));
             closedir(dir);
             return -1;
         }
-        
-        if      (S_ISSOCK(st.st_mode))  e->permissions[0] = 's';
-        else if (S_ISREG (st.st_mode))  e->permissions[0] = '-';
-        else if (S_ISBLK (st.st_mode))  e->permissions[0] = 'b';
-        else if (S_ISDIR (st.st_mode))  e->permissions[0] = 'd';
-        else if (S_ISCHR (st.st_mode))  e->permissions[0] = 'c';
-        else if (S_ISFIFO(st.st_mode))  e->permissions[0] = 'p';
-        else /*(S_ISLNK(st.st_mode))*/  e->permissions[0] = 'l';
+
+        snprintf(e->name, NAME_MAX, "%s", entry->d_name);
+        if      (S_ISSOCK(st.st_mode))   e->permissions[0] = 's';
+        else if (S_ISREG (st.st_mode))   e->permissions[0] = '-';
+        else if (S_ISBLK (st.st_mode))   e->permissions[0] = 'b';
+        else if (S_ISDIR (st.st_mode))   e->permissions[0] = 'd';
+        else if (S_ISCHR (st.st_mode))   e->permissions[0] = 'c';
+        else if (S_ISFIFO(st.st_mode))   e->permissions[0] = 'p';
+        else  /*(S_ISLNK (st.st_mode))*/ e->permissions[0] = 'l';
+
+        e->permissions[3]  = (st.st_mode & S_IXUSR) ? 'x' : '-';
+        e->permissions[6]  = (st.st_mode & S_IXGRP) ? 'x' : '-';
+        e->permissions[9]  = (st.st_mode & S_IXOTH) ? 'x' : '-';
+
+        e->time_sort = st.st_mtime;
+        e->size_sort = st.st_size;
+
+        if (!params->long_format) continue;
+
+        char link_target[PATH_MAX];
+        ssize_t len = readlink(full_path, link_target, PATH_MAX - 1);
+        if (len != -1) {
+            link_target[len] = '\0';
+            snprintf(e->link_path, PATH_MAX, "%s", link_target);
+        } else {
+            fprintf(stderr, "lsc: cannot read link '%s': %s\n", entry->d_name, strerror(errno));
+        }
 
         e->permissions[1]  = (st.st_mode & S_IRUSR) ? 'r' : '-';
         e->permissions[2]  = (st.st_mode & S_IWUSR) ? 'w' : '-';
-        e->permissions[3]  = (st.st_mode & S_IXUSR) ? 'x' : '-';
         e->permissions[4]  = (st.st_mode & S_IRGRP) ? 'r' : '-';
         e->permissions[5]  = (st.st_mode & S_IWGRP) ? 'w' : '-';
-        e->permissions[6]  = (st.st_mode & S_IXGRP) ? 'x' : '-';
         e->permissions[7]  = (st.st_mode & S_IROTH) ? 'r' : '-';
         e->permissions[8]  = (st.st_mode & S_IWOTH) ? 'w' : '-';
-        e->permissions[9]  = (st.st_mode & S_IXOTH) ? 'x' : '-';
         e->permissions[10] = '\0';
 
         if (params->human_readable) {
@@ -277,4 +315,51 @@ static int parse_entries(entries_t *entries, params_t *params) {
     closedir(dir);
 
     return 0;
+}
+
+static void sort(entries_t *entries, int (*predicate)(const void *, const void *)) {
+    qsort(entries->data, entries->count, sizeof(entry_t), predicate);
+}
+
+static int compare_time_desc(const void *a, const void *b) {
+    const entry_t *ea = (const entry_t *) a;
+    const entry_t *eb = (const entry_t *) b;
+
+    return eb->time_sort == ea->time_sort ? 0 : 
+           eb->time_sort >  ea->time_sort ? 1 : -1;
+}
+
+static int compare_time_asc(const void *a, const void *b) {
+    return compare_time_desc(b, a);
+}
+
+static int compare_size_desc(const void *a, const void *b) {
+    const entry_t *ea = (const entry_t *) a;
+    const entry_t *eb = (const entry_t *) b;
+
+    return eb->size_sort == ea->size_sort ? 0 : 
+           eb->size_sort >  ea->size_sort ? 1 : -1;
+}
+
+static int compare_size_asc(const void *a, const void *b) {
+    return compare_size_desc(b, a);
+}
+
+static int compare_name_desc(const void *a, const void *b) {
+    const entry_t *ea = (const entry_t *) a;
+    const entry_t *eb = (const entry_t *) b;
+
+    if (strcmp(ea->name, ".")  == 0) return  1;
+    if (strcmp(ea->name, "..") == 0) return  1;
+    if (strcmp(eb->name, ".")  == 0) return -1;
+    if (strcmp(eb->name, "..") == 0) return -1;
+
+    const char *na = ea->name[0] == '.' ? ea->name + 1 : ea->name;
+    const char *nb = eb->name[0] == '.' ? eb->name + 1 : eb->name;
+
+    return strcasecmp(nb, na);
+}
+
+static int compare_name_asc(const void *a, const void *b) {
+    return compare_name_desc(b, a);
 }
