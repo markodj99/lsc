@@ -17,6 +17,22 @@
 #define OWNER_MAX       32
 #define DATE_MAX        32
 
+#define COLOR_RESET     "\033[0m"    // reset
+#define COLOR_DIR       "\033[1;34m" // blue
+#define COLOR_LINK      "\033[1;36m" // cyan
+#define COLOR_EXEC      "\033[1;32m" // green
+#define COLOR_SOC       "\033[35m"   // magenta
+#define COLOR_DEV       "\033[33m"   // yellow
+
+#define COLOR_R         "\033[32m"   // green
+#define COLOR_W         "\033[33m"   // yellow
+#define COLOR_X         "\033[31m"   // red
+
+#define COLOR_OWNER     "\033[35m"   // magenta
+#define COLOR_DATE      "\033[96m"   // light blue
+#define COLOR_SIZE      "\033[33m"   // yellow
+#define COLOR_PERM      "\033[37m"   // white
+
 
 typedef struct params  {
     char     target_dir[PATH_MAX];
@@ -46,6 +62,7 @@ typedef struct entries {
     entry_t *data;
 } entries_t;
 
+
 static int  parse_args(int argc, char **argv, params_t *params);
 
 static int  parse_entries(entries_t *entries, params_t *params);
@@ -64,12 +81,17 @@ static int  compare_name_desc(const void *a, const void *b);
 
 static int  compare_name_asc (const void *a, const void *b);
 
+static void print_short_entries(entries_t *entries);
+
+static void print_long_entries (entries_t *entries);
+
 
 int main(int argc, char **argv) {
 
     params_t params = {
         .long_format = false,
         .all = false,
+        .almost_all = false,
         .human_readable = false,
         .sort_by_time = false,
         .sort_by_size = false,
@@ -117,22 +139,8 @@ int main(int argc, char **argv) {
         sort(&entries, !params.reverse_order ? compare_name_asc : compare_name_desc);
     }
 
-    if (!params.long_format) {
-        for (size_t i = 0; i < entries.count; i++) {
-            printf("%s ", entries.data[i].name);
-        }
-        printf("\n");
-    } else {
-        for (size_t i = 0; i < entries.count; i++) {
-            printf("%s ", entries.data[i].permissions);
-            printf("%s ", entries.data[i].file_size);
-            printf("%s ", entries.data[i].owner);
-            printf("%s ", entries.data[i].date);
-            printf("%s ", entries.data[i].name);
-            printf("\n");
-        }
-        printf("\n");
-    }
+    if (params.long_format) print_long_entries (&entries);
+    else                    print_short_entries(&entries);
 
     free(entries.data);
 
@@ -273,13 +281,15 @@ static int parse_entries(entries_t *entries, params_t *params) {
 
         if (!params->long_format) continue;
 
-        char link_target[PATH_MAX];
-        ssize_t len = readlink(full_path, link_target, PATH_MAX - 1);
-        if (len != -1) {
-            link_target[len] = '\0';
-            snprintf(e->link_path, PATH_MAX, "%s", link_target);
-        } else {
-            fprintf(stderr, "lsc: cannot read link '%s': %s\n", entry->d_name, strerror(errno));
+        if (S_ISLNK(st.st_mode)) {
+            char link_target[PATH_MAX];
+            ssize_t len = readlink(full_path, link_target, PATH_MAX - 1);
+            if (len != -1) {
+                link_target[len] = '\0';
+                snprintf(e->link_path, PATH_MAX, "%s", link_target);
+            } else {
+                fprintf(stderr, "lsc: cannot read link '%s': %s\n", entry->d_name, strerror(errno));
+            }
         }
 
         e->permissions[1]  = (st.st_mode & S_IRUSR) ? 'r' : '-';
@@ -362,4 +372,86 @@ static int compare_name_desc(const void *a, const void *b) {
 
 static int compare_name_asc(const void *a, const void *b) {
     return compare_name_desc(b, a);
+}
+
+static void print_short_entries(entries_t *entries) {
+    for (size_t i = 0; i < entries->count; i++) {
+            printf("%s ", entries->data[i].name);
+    }
+    printf("\n");
+}
+
+static void print_long_entries(entries_t *entries) {
+
+    size_t count = entries->count;
+
+    size_t max_file = 0;
+    for (size_t i = 0; i < entries->count; i++) {
+        size_t len = strlen(entries->data[i].file_size);
+        if (len > max_file) max_file = len;
+    }
+
+    size_t max_owner = 0;
+    for (size_t i = 0; i < entries->count; i++) {
+        size_t len = strlen(entries->data[i].owner);
+        if (len > max_owner) max_owner = len;
+    }
+
+    for (size_t i = 0; i < count; i++) {
+
+        const char *p = entries->data[i].permissions;
+
+        for (int j = 0; p[j] != '\0'; j++) {
+            switch (p[j]) {
+                case 'p':
+                case 'c':
+                case 'b': printf(COLOR_DEV   "%c" COLOR_RESET, p[j]); break;
+
+                case 'd': printf(COLOR_DIR   "%c" COLOR_RESET, p[j]); break;
+                case 's': printf(COLOR_SOC   "%c" COLOR_RESET, p[j]); break;
+                case 'l': printf(COLOR_LINK  "%c" COLOR_RESET, p[j]); break;
+
+                case '-': printf(COLOR_RESET "%c" COLOR_RESET, p[j]); break;
+
+                case 'r': printf(COLOR_R     "%c" COLOR_RESET, p[j]); break;
+                case 'w': printf(COLOR_W     "%c" COLOR_RESET, p[j]); break;
+                case 'x': printf(COLOR_X     "%c" COLOR_RESET, p[j]); break;
+                
+                default : printf(COLOR_RESET "%c" COLOR_RESET, p[j]); break;
+            }
+        }
+
+        printf(COLOR_SIZE  " %*s" COLOR_RESET, (int)max_file,  entries->data[i].file_size);
+        printf(COLOR_OWNER " %*s" COLOR_RESET, (int)max_owner, entries->data[i].owner);
+        printf(COLOR_DATE  " %s"  COLOR_RESET,                 entries->data[i].date);
+
+        const char *name = entries->data[i].name;
+        const char *link = entries->data[i].link_path;
+        printf("  ");
+        switch (p[0]) {
+            case 'p':
+            case 'c':
+            case 'b': printf(COLOR_DEV   "%s"  COLOR_RESET, name); break;
+
+            case 'd': printf(COLOR_DIR   "%s"  COLOR_RESET, name); break;
+            case 's': printf(COLOR_SOC   "%s"  COLOR_RESET, name); break;
+
+            case 'l': {
+                      printf(COLOR_LINK  "%s " COLOR_RESET, name);
+                      printf("-> ");
+                      printf(COLOR_LINK  "%s"  COLOR_RESET, link);
+            } break;
+            case '-': {
+                if (p[3] == 'x' || p[6] == 'x' || p[9] == 'x') {
+                      printf(COLOR_EXEC  "%s"  COLOR_RESET, name);
+                } else {
+                      printf(COLOR_RESET "%s"  COLOR_RESET, name);
+                }                                      
+            } break;
+
+            default : printf(COLOR_RESET "%s"  COLOR_RESET, name); break;
+        }
+
+        printf("\n");
+    }
 }
