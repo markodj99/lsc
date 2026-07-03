@@ -10,6 +10,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <sys/ioctl.h>
 
 
 #define PERMISSIONS_MAX 11
@@ -375,10 +376,59 @@ static int compare_name_asc(const void *a, const void *b) {
 }
 
 static void print_short_entries(entries_t *entries) {
-    for (size_t i = 0; i < entries->count; i++) {
-            printf("%s ", entries->data[i].name);
+    
+    size_t count = entries->count;
+
+    struct winsize w;
+    ioctl(STDOUT_FILENO, TIOCGWINSZ, &w);
+    size_t term_width = w.ws_col > 80 ? w.ws_col : 80;
+
+    size_t max_width = 0;
+    for (size_t i = 0; i < count; i++) {
+        size_t curr_width = strlen(entries->data[i].name);
+        if (curr_width > max_width) max_width = curr_width;
     }
-    printf("\n");
+    max_width += 2;
+
+    size_t cols = term_width / max_width;
+    cols = cols > 0 ? cols : 1;
+    size_t rows = (count + cols - 1) / cols; // int ceil
+
+    for (size_t row = 0; row < rows; row++) {
+        
+        for (size_t col = 0; col < cols; col++) {
+            
+            size_t i = row + col * rows;
+            if (i >= count) break;
+
+            const char *p    = entries->data[i].permissions;
+            const char *name = entries->data[i].name;
+            const char *color;
+            
+            switch (p[0]) {
+                case 'p': 
+                case 'c':
+                case 'b': color = COLOR_DEV;   break;
+                
+                case 'd': color = COLOR_DIR;   break;
+                case 's': color = COLOR_SOC;   break;
+                case 'l': color = COLOR_LINK;  break;
+                case '-': {
+                    if (p[3] == 'x' || p[6] == 'x' || p[9] == 'x') color = COLOR_EXEC;
+                    else                                           color = COLOR_RESET;
+                } break;
+                default : color = COLOR_RESET; break;
+            }
+
+            if (i + 1 < count) {
+                printf("%s%-*s%s", color, (int)max_width, name, COLOR_RESET);
+            } else {
+                printf("%s%s%s",   color,                 name, COLOR_RESET);
+            }
+        }
+
+        printf("\n");
+    }
 }
 
 static void print_long_entries(entries_t *entries) {
