@@ -82,9 +82,9 @@ static int  compare_name_desc(const void *a, const void *b);
 
 static int  compare_name_asc (const void *a, const void *b);
 
-static void print_short_entries(entries_t *entries);
+static int  print_short_entries(entries_t *entries);
 
-static void print_long_entries (entries_t *entries);
+static int  print_long_entries (entries_t *entries);
 
 
 int main(int argc, char **argv) {
@@ -140,12 +140,12 @@ int main(int argc, char **argv) {
         sort(&entries, !params.reverse_order ? compare_name_asc : compare_name_desc);
     }
 
-    if (params.long_format) print_long_entries (&entries);
-    else                    print_short_entries(&entries);
+    int ret_code = params.long_format ? print_long_entries (&entries):
+                                        print_short_entries(&entries);
 
     free(entries.data);
 
-    return 0;
+    return ret_code;
 }
 
 
@@ -375,24 +375,56 @@ static int compare_name_asc(const void *a, const void *b) {
     return compare_name_desc(b, a);
 }
 
-static void print_short_entries(entries_t *entries) {
-    
+static int print_short_entries(entries_t *entries) {
+
     size_t count = entries->count;
 
     struct winsize w;
-    ioctl(STDOUT_FILENO, TIOCGWINSZ, &w);
+    ioctl(STDOUT_FILENO,  TIOCGWINSZ, &w);
     size_t term_width = w.ws_col > 80 ? w.ws_col : 80;
 
-    size_t max_width = 0;
-    for (size_t i = 0; i < count; i++) {
-        size_t curr_width = strlen(entries->data[i].name);
-        if (curr_width > max_width) max_width = curr_width;
+    size_t cols = count;
+    size_t rows = 1;
+    size_t *col_widths = calloc(count, sizeof(size_t));
+    if (col_widths == NULL) {
+        fprintf(stderr, "lsc: memory allocation failed\n");
+        return -1;
     }
-    max_width += 2;
 
-    size_t cols = term_width / max_width;
-    cols = cols > 0 ? cols : 1;
-    size_t rows = (count + cols - 1) / cols; // int ceil
+    for (; cols > 1; cols--) { // fit as many cols as possible
+
+        rows = (count + cols - 1) / cols; // int ceil
+
+        size_t *temp = realloc(col_widths, cols * sizeof(size_t));
+        if (temp == NULL) {
+            fprintf(stderr, "lsc: memory allocation failed\n");
+            free(col_widths);
+            return -1;
+        }
+        col_widths = temp;
+        memset(col_widths, 0, cols * sizeof(size_t));
+
+        size_t total_width = 0;
+        for (size_t col = 0; col < cols; col++) {
+            for (size_t row = 0; row < rows; row++) {
+                size_t i = col * rows + row;
+                if (i >= count) break;
+                size_t len = strlen(entries->data[i].name);
+                if (len > col_widths[col]) col_widths[col] = len;
+            }
+            total_width += col_widths[col] + 2;
+        }
+
+        if (total_width <= term_width) break;
+    }
+
+    if (cols == 1) {
+        rows = count;
+        for (size_t i = 0; i < count; i++) {
+            size_t len = strlen(entries->data[i].name);
+            if (len > col_widths[0]) col_widths[0] = len;
+        }
+    }
 
     for (size_t row = 0; row < rows; row++) {
         
@@ -421,17 +453,21 @@ static void print_short_entries(entries_t *entries) {
             }
 
             if (i + 1 < count) {
-                printf("%s%-*s%s", color, (int)max_width, name, COLOR_RESET);
+                printf("%s%-*s%s", color, (int)(col_widths[col] + 2), name, COLOR_RESET);
             } else {
-                printf("%s%s%s",   color,                 name, COLOR_RESET);
+                printf("%s%s%s",   color,                             name, COLOR_RESET);
             }
         }
 
         printf("\n");
     }
+
+    free(col_widths);
+
+    return 0;
 }
 
-static void print_long_entries(entries_t *entries) {
+static int print_long_entries(entries_t *entries) {
 
     size_t count = entries->count;
 
@@ -504,4 +540,6 @@ static void print_long_entries(entries_t *entries) {
 
         printf("\n");
     }
+
+    return 0;
 }
