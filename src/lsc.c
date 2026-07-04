@@ -60,7 +60,7 @@ typedef struct entry   {
 typedef struct entries {
     size_t   capacity;
     size_t   count;
-    entry_t *data;
+    entry_t  *data;
 } entries_t;
 
 
@@ -140,9 +140,9 @@ int main(int argc, char **argv) {
         sort(&entries, !params.reverse_order ? compare_name_asc : compare_name_desc);
     }
 
-    int ret_code = params.long_format ? print_long_entries (&entries):
-                                        print_short_entries(&entries);
-
+    int ret_code = params.long_format ? print_long_entries (&entries)
+                                      : print_short_entries(&entries);
+    
     free(entries.data);
 
     return ret_code;
@@ -229,7 +229,7 @@ static int parse_entries(entries_t *entries, params_t *params) {
 
     struct dirent *entry;
 
-    for (; (entry = readdir(dir)) != NULL; entries->count++) {
+    while ((entry = readdir(dir)) != NULL) {
         
         if (!params->all && !params->almost_all && entry->d_name[0] == '.') {
             continue;
@@ -280,47 +280,50 @@ static int parse_entries(entries_t *entries, params_t *params) {
         e->time_sort = st.st_mtime;
         e->size_sort = st.st_size;
 
-        if (!params->long_format) continue;
+        if (params->long_format) {
 
-        if (S_ISLNK(st.st_mode)) {
-            char link_target[PATH_MAX];
-            ssize_t len = readlink(full_path, link_target, PATH_MAX - 1);
-            if (len != -1) {
-                link_target[len] = '\0';
-                snprintf(e->link_path, PATH_MAX, "%s", link_target);
-            } else {
-                fprintf(stderr, "lsc: cannot read link '%s': %s\n", entry->d_name, strerror(errno));
+            if (S_ISLNK(st.st_mode)) {
+                char link_target[PATH_MAX];
+                ssize_t len = readlink(full_path, link_target, PATH_MAX - 1);
+                if (len != -1) {
+                    link_target[len] = '\0';
+                    snprintf(e->link_path, PATH_MAX, "%s", link_target);
+                } else {
+                    fprintf(stderr, "lsc: cannot read link '%s': %s\n", entry->d_name, strerror(errno));
+                }
             }
+
+            e->permissions[1]  = (st.st_mode & S_IRUSR) ? 'r' : '-';
+            e->permissions[2]  = (st.st_mode & S_IWUSR) ? 'w' : '-';
+            e->permissions[4]  = (st.st_mode & S_IRGRP) ? 'r' : '-';
+            e->permissions[5]  = (st.st_mode & S_IWGRP) ? 'w' : '-';
+            e->permissions[7]  = (st.st_mode & S_IROTH) ? 'r' : '-';
+            e->permissions[8]  = (st.st_mode & S_IWOTH) ? 'w' : '-';
+            e->permissions[10] = '\0';
+
+            if (params->human_readable) {
+                off_t size = st.st_size;
+                if (size >= 1024 * 1024 * 1024) {
+                    snprintf(e->file_size, FILE_SIZE_MAX, "%.1fG", (double)size / (1024 * 1024 * 1024));
+                } else if (size >= 1024 * 1024) {
+                    snprintf(e->file_size, FILE_SIZE_MAX, "%.1fM", (double)size / (1024 * 1024));
+                } else if (size >= 1024) {
+                    snprintf(e->file_size, FILE_SIZE_MAX, "%.1fK", (double)size / 1024);
+                } else {
+                    snprintf(e->file_size, FILE_SIZE_MAX, "%ldB",  size);
+                }
+            } else {
+                snprintf(e->file_size, FILE_SIZE_MAX, "%ld", st.st_size);
+            }
+
+            struct passwd *pw = getpwuid(st.st_uid);
+            snprintf(e->owner, OWNER_MAX, "%s",  pw ? pw->pw_name : "unknown");
+
+            struct tm *tm = localtime(&st.st_mtime);
+            strftime(e->date, DATE_MAX, "%d.%m.%Y. %H:%M", tm);
         }
 
-        e->permissions[1]  = (st.st_mode & S_IRUSR) ? 'r' : '-';
-        e->permissions[2]  = (st.st_mode & S_IWUSR) ? 'w' : '-';
-        e->permissions[4]  = (st.st_mode & S_IRGRP) ? 'r' : '-';
-        e->permissions[5]  = (st.st_mode & S_IWGRP) ? 'w' : '-';
-        e->permissions[7]  = (st.st_mode & S_IROTH) ? 'r' : '-';
-        e->permissions[8]  = (st.st_mode & S_IWOTH) ? 'w' : '-';
-        e->permissions[10] = '\0';
-
-        if (params->human_readable) {
-            off_t size = st.st_size;
-            if (size >= 1024 * 1024 * 1024) {
-                snprintf(e->file_size, FILE_SIZE_MAX, "%.1fG", (double)size / (1024 * 1024 * 1024));
-            } else if (size >= 1024 * 1024) {
-                snprintf(e->file_size, FILE_SIZE_MAX, "%.1fM", (double)size / (1024 * 1024));
-            } else if (size >= 1024) {
-                snprintf(e->file_size, FILE_SIZE_MAX, "%.1fK", (double)size / 1024);
-            } else {
-                snprintf(e->file_size, FILE_SIZE_MAX, "%ldB",  size);
-            }
-        } else {
-            snprintf(e->file_size, FILE_SIZE_MAX, "%ld", st.st_size);
-        }
-
-        struct passwd *pw = getpwuid(st.st_uid);
-        snprintf(e->owner, OWNER_MAX, "%s",  pw ? pw->pw_name : "unknown");
-
-        struct tm *tm = localtime(&st.st_mtime);
-        strftime(e->date, DATE_MAX, "%d.%m.%Y. %H:%M", tm);
+        entries->count++;
     }
 
     closedir(dir);
